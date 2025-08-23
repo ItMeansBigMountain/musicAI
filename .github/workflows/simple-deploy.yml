@@ -1,0 +1,50 @@
+name: Simple Deploy with Terraform
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  APP_NAME: musicai
+  AZURE_LOCATION: westus3
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: '1.6.0'
+    
+    - name: Build and Push Docker Image
+      run: |
+        docker build -t ${{ env.APP_NAME }}:${{ github.sha }} src/api/
+        docker tag ${{ env.APP_NAME }}:${{ github.sha }} ${{ env.APP_NAME }}acrdev.azurecr.io/${{ env.APP_NAME }}:${{ github.sha }}
+        az acr login --name ${{ env.APP_NAME }}acrdev
+        docker push ${{ env.APP_NAME }}acrdev.azurecr.io/${{ env.APP_NAME }}:${{ github.sha }}
+    
+    - name: Terraform Init
+      working-directory: infra/terraform
+      run: terraform init
+    
+    - name: Terraform Plan
+      working-directory: infra/terraform
+      run: terraform plan -var="image_tag=${{ github.sha }}" -var="subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" -out=tfplan
+    
+    - name: Terraform Apply
+      working-directory: infra/terraform
+      run: terraform apply tfplan
+    
+    - name: Output FQDN
+      working-directory: infra/terraform
+      run: |
+        echo "Container App FQDN: $(terraform output -raw container_app_fqdn)"

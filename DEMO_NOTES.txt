@@ -1,0 +1,6 @@
+- show off the cursor made IaC as easy as hand keys and run 
+
+- show off app Analysis
+
+- display QR code to view linktree 
+
