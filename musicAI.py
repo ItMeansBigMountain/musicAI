@@ -30,6 +30,12 @@ import watson
 import statistics
 import random
 
+# Environment variables
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 
 # TODO make a json database of all the songs watson has already analyzed
@@ -47,20 +53,20 @@ import random
 
 # FLASK INIT VARIABLES
 application = flask.Flask(__name__ , static_url_path='', static_folder='static' , template_folder='templates')
-application.config["DEBUG"] = True
-application.secret_key = 'something secret'
+application.config["DEBUG"] = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+application.secret_key = os.getenv('FLASK_SECRET_KEY', 'something secret')
 
 # SPOTFIY INIT VARIABLES
-spotify_clientId = ''
-spotify_clientSecret = ''
+spotify_clientId = os.getenv('SPOTIFY_CLIENT_ID', '')
+spotify_clientSecret = os.getenv('SPOTIFY_CLIENT_SECRET', '')
 
 # GENIUS INIT VARIABLES
-genius_clientId = ''
-genius_clientsECRET = ''
+genius_clientId = os.getenv('GENIUS_CLIENT_ID', '')
+genius_clientsECRET = os.getenv('GENIUS_CLIENT_SECRET', '')
 
 # general use INIT VARIABLES
-spotify_callbackURL = ''
-genius_callbackURL = ''
+spotify_callbackURL = os.getenv('SPOTIFY_CALLBACK_URL', '')
+genius_callbackURL = os.getenv('GENIUS_CALLBACK_URL', '')
 
 API_COOLDOWN_RATE = 3
 
@@ -167,19 +173,33 @@ def logging_in():
 # genius login
 @application.route('/gen_login/')
 def gen_login():
-
-    genius_token = flask.request.args.get("code")
-    genius_token =  _retrieve_genius_token(genius_token)
-
-
-    # save to cookies 
-    if 'genius_token' in flask.session and flask.session.get('genius_expired') == False:
-        return flask.redirect('/Dashboard')
-    else:
-        resp = flask.make_response(flask.redirect('/Dashboard'))
-        flask.session['genius_token'] = genius_token
-        flask.session['genius_expired'] = False
-        return resp
+    # Check if we have an authorization code
+    auth_code = flask.request.args.get("code")
+    
+    if not auth_code:
+        # No code provided, redirect to home
+        return flask.redirect('/')
+    
+    try:
+        # Exchange code for token
+        genius_token = _retrieve_genius_token(auth_code)
+        
+        if not genius_token:
+            print("ERROR: Failed to retrieve Genius token")
+            return flask.redirect('/')
+        
+        # save to cookies 
+        if 'genius_token' in flask.session and flask.session.get('genius_expired') == False:
+            return flask.redirect('/Dashboard')
+        else:
+            resp = flask.make_response(flask.redirect('/Dashboard'))
+            flask.session['genius_token'] = genius_token
+            flask.session['genius_expired'] = False
+            return resp
+            
+    except Exception as e:
+        print(f"ERROR: Genius login failed: {e}")
+        return flask.redirect('/')
 
 
 
@@ -222,25 +242,45 @@ def Dashboard():
     
     # USING TRY METHOD TO FIND KEYS IN user_data RESPONSE
     try:
+        print(f"DEBUG: user_data keys: {list(user_data.keys()) if isinstance(user_data, dict) else 'Not a dict'}")
+        print(f"DEBUG: user_data type: {type(user_data)}")
+        
+        if not isinstance(user_data, dict) or 'error' in user_data:
+            print(f"ERROR: Invalid user_data: {user_data}")
+            flask.session['spotify_expired'] = True
+            return flask.redirect(authorize_spotify_REFRESHABLE())
+        
+        if 'display_name' not in user_data:
+            print(f"ERROR: Missing display_name in user_data: {user_data}")
+            flask.session['spotify_expired'] = True
+            return flask.redirect(authorize_spotify_REFRESHABLE())
+        
         # save username throughout session
         flask.session['username'] = user_data['display_name']
-        flask.session['email'] = user_data['email']
-
+        flask.session['email'] = user_data.get('email', 'No email')
+        
+        # Generate meme with error handling
+        try:
+            meme_url = fetch_meme(text0=f'{flask.session["username"]} thinks', text1="they're a data scientist...")['data']['url']
+        except Exception as meme_error:
+            print(f"ERROR: Meme generation failed: {meme_error}")
+            meme_url = 'https://via.placeholder.com/400x400?text=Error+Loading+Meme'
 
         # final display
         context = {
-            'data' : user_data,
-            'username' : flask.session['username'],
-            'email' : flask.session['email'] , 
-            'meme' : fetch_meme( text0 = f'{flask.session["username"]} thinks', text1 = "they're a data scientist..." )['data']['url'] , 
-            "amount_analyzed" : amount_analyzed,
+            'data': user_data,
+            'username': flask.session['username'],
+            'email': flask.session['email'], 
+            'meme': meme_url,
+            "amount_analyzed": amount_analyzed,
         }
-        return render_template('user_dashboard.html' , context = context )
+        return render_template('user_dashboard.html', context=context)
 
     except Exception as e:
-        print("ERROR: Dashboard()")
+        print(f"ERROR: Dashboard() - {e}")
+        print(f"ERROR: user_data content: {user_data}")
         flask.session['spotify_expired'] = True
-        return flask.redirect( authorize_spotify_REFRESHABLE() )
+        return flask.redirect(authorize_spotify_REFRESHABLE())
 
 
 
@@ -962,25 +1002,43 @@ def _retrieve_refreshable_token(auth_code):
     token = r['access_token']
     return token
 def _retrieve_genius_token(auth_code):
-    # turn this into new function after user goes to web_page and logs in
+    # Exchange authorization code for access token
     url = "https://api.genius.com/oauth/token"
     
-    data = {}
-    data['code'] = auth_code
-    data['client_id'] = genius_clientId
-    data['client_secret'] = genius_clientsECRET
-    data['grant_type'] = "authorization_code"
-    data['redirect_uri'] = genius_callbackURL
-    data['response_type'] = 'code'
-
-    r = requests.post(url, data=data).json()
-    token = r['access_token']
-    return token
+    data = {
+        'code': auth_code,
+        'client_id': genius_clientId,
+        'client_secret': genius_clientsECRET,
+        'grant_type': "authorization_code",
+        'redirect_uri': genius_callbackURL
+    }
+    
+    try:
+        r = requests.post(url, data=data)
+        r.raise_for_status()  # Raise exception for bad status codes
+        
+        response_data = r.json()
+        
+        if 'access_token' in response_data:
+            token = response_data['access_token']
+            print(f"SUCCESS: Retrieved Genius token for {flask.request.remote_addr}")
+            return token
+        else:
+            print(f"ERROR: No access_token in Genius response: {response_data}")
+            return None
+            
+    except requests.exceptions.RequestException as e:
+        print(f"ERROR: Request failed for Genius token: {e}")
+        return None
+    except Exception as e:
+        print(f"ERROR: Failed to retrieve Genius token: {e}")
+        return None
 
 # Genius 
-def Oauth_function( base_url , CLIENT_ID , callback , scope ,  clientsECRET , res_type):
-    url = f'{base_url}?client_id={CLIENT_ID}&redirect_uri={callback}&scope={scope}&response_type={res_type}&client_secret={clientsECRET}'
-
+def Oauth_function(base_url, CLIENT_ID, callback, scope, clientsECRET, res_type):
+    # For Genius OAuth, we don't need client_secret in the authorization URL
+    # Only include the required parameters for the authorization step
+    url = f'{base_url}?client_id={CLIENT_ID}&redirect_uri={callback}&scope={scope}&response_type={res_type}'
     return url
 
 
@@ -1637,34 +1695,52 @@ def liked_group_average(token , group : list()  ):
 
 
 # helper functions
-def fetch_meme(text0 , text1):
-    #login
-    username = ''
-    password = ''
-    userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36'
-
-
-    #fetch all memes
-    data = requests.get('https://api.imgflip.com/get_memes').json()['data']['memes']
-    #List top memes with 2 text slots
-    images = [{'name':image['name'],'url':image['url'],'id':image['id']} for image in data if image['box_count'] == 2]
-
-
-    #Take input from user -- Meme, Text0 and Text1
-    id = random.randint(1,100)
-
-
-    #generated meme
-    URL = 'https://api.imgflip.com/caption_image'
-    params = {
-        'username':username,
-        'password':password,
-        'template_id':images[id-1]['id'],
-        'text0':text0,
-        'text1':text1
-    }
-    response = requests.request('POST',URL,params=params).json()
-    return response
+def fetch_meme(text0, text1):
+    try:
+        # fetch all memes
+        response = requests.get('https://api.imgflip.com/get_memes')
+        response.raise_for_status()
+        data = response.json()
+        
+        if 'data' not in data or 'memes' not in data['data']:
+            print("ERROR: Invalid response from imgflip API")
+            return {'data': {'url': 'https://via.placeholder.com/400x400?text=No+Meme+Available'}}
+        
+        memes = data['data']['memes']
+        # List top memes with 2 text slots
+        images = [{'name': image['name'], 'url': image['url'], 'id': image['id']} 
+                 for image in memes if image['box_count'] == 2]
+        
+        if not images:
+            print("ERROR: No 2-text memes available")
+            return {'data': {'url': 'https://via.placeholder.com/400x400?text=No+Meme+Available'}}
+        
+        # Take random meme from available ones
+        meme = random.choice(images)
+        
+        # Generate meme
+        URL = 'https://api.imgflip.com/caption_image'
+        params = {
+            'username': '',  # No username needed for public API
+            'password': '',  # No password needed for public API
+            'template_id': meme['id'],
+            'text0': text0,
+            'text1': text1
+        }
+        
+        meme_response = requests.post(URL, params=params)
+        meme_response.raise_for_status()
+        result = meme_response.json()
+        
+        if 'success' in result and result['success'] and 'data' in result:
+            return result
+        else:
+            print(f"ERROR: Failed to generate meme: {result}")
+            return {'data': {'url': 'https://via.placeholder.com/400x400?text=Meme+Generation+Failed'}}
+            
+    except Exception as e:
+        print(f"ERROR: fetch_meme failed: {e}")
+        return {'data': {'url': 'https://via.placeholder.com/400x400?text=Error+Loading+Meme'}}
 
 
 

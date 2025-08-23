@@ -3,15 +3,18 @@ from ibm_watson import NaturalLanguageUnderstandingV1
 from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
 from ibm_watson.natural_language_understanding_v1 import Features, EntitiesOptions, KeywordsOptions, CategoriesOptions, ConceptsOptions, EmotionOptions, RelationsOptions, SemanticRolesOptions, SentimentOptions, SyntaxOptions
 
-
-
 import statistics
 import datetime
-
 from pprint import pprint
 
-'''
+# Environment variables
+import os
+from dotenv import load_dotenv
 
+# Load environment variables
+load_dotenv()
+
+'''
 NOTE
 in order to use properly ... 
   - log in function
@@ -19,21 +22,15 @@ in order to use properly ...
   - run averages on the array ---> averages_calc( text_Models )
   -after you have the averaged array (input works with just one item as well.)... you will recieve a dictionary with all sentiment frequencies.
   -
-
-
 '''
-
 
 # Login to NLU service
 def login():
   # Login to IBM (30K requests a month.... goes fast if you run each line on its own analysis)
   
-
   # NOTE COMMENT AND UNCOMMENT  api_key & url combinations for API limit
-  api_key = ''
-  url = ''
-
-
+  api_key = os.getenv('WATSON_API_KEY', '')
+  url = os.getenv('WATSON_SERVICE_URL', '')
 
   authenticator = IAMAuthenticator(api_key)
   natural_language_understanding = NaturalLanguageUnderstandingV1(

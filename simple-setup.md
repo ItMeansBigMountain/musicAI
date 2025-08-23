@@ -16,16 +16,45 @@ az ad sp create-for-rbac --name "musicai-sp" --role contributor --scopes /subscr
 
 Go to your repo → Settings → Secrets and variables → Actions
 
-Add these secrets:
+### Azure Infrastructure Secrets:
 - `AZURE_CREDENTIALS` - the JSON from step 1
 - `AZURE_SUBSCRIPTION_ID` - your subscription ID (get with `az account show --query id -o tsv`)
+- `AZURE_TENANT_ID` - your tenant ID
+- `AZURE_CLIENT_ID` - client ID from service principal
+- `AZURE_CLIENT_SECRET` - client secret from service principal
 
-## 3. First Deploy
+### API Service Secrets:
+- `SPOTIFY_CLIENT_ID` - your Spotify app client ID
+- `SPOTIFY_CLIENT_SECRET` - your Spotify app client secret
+- `SPOTIFY_CALLBACK_URL` - your production callback URL
+- `GENIUS_CLIENT_ID` - your Genius app client ID
+- `GENIUS_CLIENT_SECRET` - your Genius app client secret
+- `GENIUS_CALLBACK_URL` - your production callback URL
+- `WATSON_API_KEY` - your IBM Watson NLU API key
+- `WATSON_SERVICE_URL` - your IBM Watson service URL
+
+### App Secrets:
+- `FLASK_SECRET_KEY` - random string for Flask sessions
+
+## 3. Local Development
+
+```bash
+# Copy environment template
+cp env.template .env
+
+# Fill in your API keys in .env file
+# See LOCAL_DEV.md for detailed instructions
+
+# Test locally
+python musicAI.py
+```
+
+## 4. First Deploy
 
 ```bash
 # Push to main branch
 git add .
-git commit -m "Add simple API with Terraform"
+git commit -m "Add environment variable support"
 git push origin main
 ```
 
@@ -33,10 +62,10 @@ The workflow will:
 1. Build your Docker image
 2. Push to ACR
 3. Run `terraform init/plan/apply`
-4. Deploy container app
+4. Deploy container app with all environment variables
 5. Output the FQDN
 
-## 4. Test Your Endpoint
+## 5. Test Your Endpoint
 
 The workflow outputs the FQDN. Visit:
 - `https://your-fqdn/` - returns service info
@@ -49,9 +78,10 @@ The workflow outputs the FQDN. Visit:
 - ✅ Simple container app
 - ✅ Terraform-managed infrastructure
 - ✅ Dedicated resource group: `musicai-rg`
+- ✅ Environment variables for all APIs
+- ✅ Easy local development with `.env`
 - ✅ Easy to destroy/recreate
 - ❌ No production hardening
-- ❌ No secrets management
 - ❌ No monitoring
 
 ## Local Terraform (Optional)

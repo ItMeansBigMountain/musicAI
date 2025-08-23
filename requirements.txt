@@ -1,4 +1,5 @@
 flask
-bs4
 ibm_watson
+python-dotenv
 requests
+beautifulsoup4
