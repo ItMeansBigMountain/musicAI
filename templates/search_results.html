@@ -5,7 +5,14 @@
 
 {% block content %}
 
-
+<!-- HELPFUL NOTE ABOUT SONG ANALYSIS -->
+{% if content.tracks|length > 0 %}
+<div class="alert alert-info" role="alert">
+    <i class="fas fa-info-circle"></i>
+    <strong>Note:</strong> Some songs may not be available for AI analysis due to regional restrictions or premium content requirements. 
+    If analysis fails, try a different song or check if the song is available in your region.
+</div>
+{% endif %}
 
 <!-- NO RESULTS FOUND -->
 <!-- {% if content.tracks[0] is not defined %}

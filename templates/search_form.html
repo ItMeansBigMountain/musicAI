@@ -1,47 +1,60 @@
 {% extends "base.html" %}
 
-{% block title %}Loading...{% endblock %}
-
-
-
-
+{% block title %}Search Music{% endblock %}
 
 {% block content %}
 
-
-<br><br> 
-
-<!-- simple form.... action will send to route. route accepts posts...
-    print flask.request.form to get args -->
-
-
-<div class="container bcontent">
-    <div class="card" style="width: 500px;">
-        <div class="card-title">
-            Look Up A Song!
-        </div>
-        <div class="row no-gutters">
-            <div class="col-sm-7">
-                <!-- form inside of card body -->
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0">
+                        <i class="fas fa-search"></i> Search Music
+                    </h4>
+                </div>
                 <div class="card-body">
                     <form action="search-results" method="post">
-                        <label for="q">Enter Song Name or Artist</label>
-                        <input type="search" name="q" value="" required>
-                        <br><input type="checkbox" name="q_type" value="True">
-                        <label class="form-check-label" for="artist">Artist (doesnt really work yet) </label><br>
-                        <input type="submit" value="Submit" class="btn btn-primary">
+                        <div class="form-group mb-3">
+                            <label for="q" class="form-label">
+                                <strong>Enter Song Name or Artist</strong>
+                            </label>
+                            <input type="search" 
+                                   class="form-control form-control-lg" 
+                                   name="q" 
+                                   id="q"
+                                   placeholder="e.g., Bohemian Rhapsody, Queen, etc."
+                                   value="" 
+                                   required>
+                        </div>
+                        
+                        <div class="form-check mb-3">
+                            <input type="checkbox" 
+                                   class="form-check-input" 
+                                   name="q_type" 
+                                   id="q_type"
+                                   value="True">
+                            <label class="form-check-label" for="q_type">
+                                Search for Artist (experimental)
+                            </label>
+                        </div>
+                        
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="fas fa-search"></i> Search
+                            </button>
+                        </div>
                     </form>
                 </div>
+            </div>
+            
+            <div class="text-center mt-3">
+                <small class="text-muted">
+                    Search for any song or artist to analyze with AI
+                </small>
             </div>
         </div>
     </div>
 </div>
-
-
-
-
-<br><br> 
-
-
 
 {% endblock %}

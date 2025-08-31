@@ -144,6 +144,51 @@
 
 
 
+            <!-- Recently Played Tracks Display -->
+            {% if context.recent_tracks %}
+            <div class="w3-container w3-card w3-white w3-margin-bottom">
+                <h2 class="w3-text-grey w3-padding-16">
+                    <i class="fas fa-history fa-fw w3-margin-right w3-xxlarge w3-text-teal"></i>
+                    Recently Played Tracks
+                </h2>
+                
+                <div class="w3-container">
+                    <p class="w3-text-grey">Your most recent listening history:</p>
+                    
+                    <div class="w3-row-padding">
+                        {% for track in context.recent_tracks[:6] %}
+                        <div class="w3-col m6 w3-margin-bottom">
+                            <div class="w3-card w3-white w3-padding">
+                                <div class="w3-row">
+                                    <div class="w3-col m4">
+                                        <img src="{{ track.thumbnail }}" alt="{{ track.name }}" style="width:100%; height:80px; object-fit:cover;">
+                                    </div>
+                                    <div class="w3-col m8 w3-padding">
+                                        <h6 class="w3-text-teal"><b>{{ track.name }}</b></h6>
+                                        <p class="w3-small">{{ track.artists|join(', ') }}</p>
+                                        <p class="w3-small w3-text-grey">{{ track.album }}</p>
+                                        <form action="song-analysis" method="post" style="margin-top:5px;">
+                                            <input name="analysis_id" type="hidden" value="{{ track.id }}">
+                                            <input name="song_name" type="hidden" value="{{ track.name }}">
+                                            <input name="song_artist_name" type="hidden" value="{{ track.artists[0] }}">
+                                            <button type="submit" class="btn btn-sm btn-primary">Analyze</button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    
+                    <div class="w3-center w3-margin-top">
+                        <a href="/recent-analysis" onclick="loaderFunction()" class="btn btn-secondary">
+                            <i class="fas fa-chart-bar"></i> Analyze All Recent Tracks
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
             <!-- right side bottom container -->
             <div class="w3-container w3-card w3-white">
 
@@ -216,6 +261,17 @@
                                 class="btn btn-secondary">Scan!</button></a>
                     </h6>
                     <p>Get stats for liked songs! </p><br>
+                </div>
+
+                <hr>
+
+                <div class="w3-container">
+                    <h5 class="w3-opacity"><b>Recently Played Tracks</b></h5>
+                    <h6 class="w3-text-teal">
+                        <i class="fas fa-history fa-fw w3-margin-right"></i>
+                        <a href="/recent-analysis" onclick="loaderFunction()"><button class="btn btn-secondary">Analyze Recent!</button></a>
+                    </h6>
+                    <p>Get stats for your recently played music! </p><br>
                 </div>
 
 

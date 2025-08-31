@@ -32,3 +32,6 @@ Thumbs.db
 .env.local
 .env.production
 .env.development
+
+# python
+__pycache__/

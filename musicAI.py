@@ -37,6 +37,45 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Validate required environment variables
+required_env_vars = [
+    'SPOTIFY_CLIENT_ID',
+    'SPOTIFY_CLIENT_SECRET', 
+    'SPOTIFY_CALLBACK_URL',
+    'GENIUS_API_KEY',  # Changed from OAuth to direct API key
+    'WATSON_API_KEY',
+    'WATSON_SERVICE_URL'
+]
+
+# Optional but recommended for full functionality
+optional_env_vars = [
+    'IMGFLIP_USERNAME',
+    'IMGFLIP_PASSWORD'
+]
+
+missing_vars = []
+for var in required_env_vars:
+    if not os.getenv(var):
+        missing_vars.append(var)
+
+if missing_vars:
+    print("WARNING: Missing required environment variables:")
+    for var in missing_vars:
+        print(f"  - {var}")
+    print("\nPlease check your .env file or environment variables.")
+    print("The app may not function properly without these variables.\n")
+
+# Check optional variables
+missing_optional = []
+for var in optional_env_vars:
+    if not os.getenv(var):
+        missing_optional.append(var)
+
+if missing_optional:
+    print("INFO: Missing optional environment variables:")
+    for var in missing_optional:
+        print(f"  - {var}")
+    print("These are not required but enable additional features like meme generation.\n")
 
 # TODO make a json database of all the songs watson has already analyzed
 # make a function to apply the database before running the analysis, check if we already have it
@@ -60,13 +99,18 @@ application.secret_key = os.getenv('FLASK_SECRET_KEY', 'something secret')
 spotify_clientId = os.getenv('SPOTIFY_CLIENT_ID', '')
 spotify_clientSecret = os.getenv('SPOTIFY_CLIENT_SECRET', '')
 
-# GENIUS INIT VARIABLES
-genius_clientId = os.getenv('GENIUS_CLIENT_ID', '')
-genius_clientsECRET = os.getenv('GENIUS_CLIENT_SECRET', '')
+# GENIUS INIT VARIABLES - Using direct API key instead of OAuth
+genius_api_key = os.getenv('GENIUS_API_KEY', '')
 
 # general use INIT VARIABLES
 spotify_callbackURL = os.getenv('SPOTIFY_CALLBACK_URL', '')
-genius_callbackURL = os.getenv('GENIUS_CALLBACK_URL', '')
+
+# Token storage file
+TOKEN_FILE = 'user_tokens.json'
+
+# Imgflip API credentials
+imgflip_username = os.getenv('IMGFLIP_USERNAME', '')
+imgflip_password = os.getenv('IMGFLIP_PASSWORD', '')
 
 API_COOLDOWN_RATE = 3
 
@@ -98,18 +142,71 @@ for i in scopes:
     spotty_full_permission += i + ' '
 
 
-# genius scopes
-genius_scopes = [
-    'me',
-    'create_annotation',
-    'manage_annotation',
-    'vote',
-]
-genius_full_permission = ''
-for i in genius_scopes:
-    genius_full_permission += i + ' '
+# Token storage functions
+def save_user_token(user_id, token_data):
+    """Save user tokens to local storage"""
+    try:
+        if os.path.exists(TOKEN_FILE):
+            with open(TOKEN_FILE, 'r') as f:
+                tokens = json.load(f)
+        else:
+            tokens = {}
+        
+        tokens[user_id] = {
+            'spotify_token': token_data.get('spotify_token'),
+            'spotify_refresh_token': token_data.get('spotify_refresh_token'),
+            'spotify_expires_at': token_data.get('spotify_expires_at'),
+            'genius_token': token_data.get('genius_token'),
+            'last_updated': time.time()
+        }
+        
+        with open(TOKEN_FILE, 'w') as f:
+            json.dump(tokens, f, indent=2)
+            
+    except Exception as e:
+        print(f"ERROR: Failed to save tokens: {e}")
 
+def load_user_token(user_id):
+    """Load user tokens from local storage"""
+    try:
+        if os.path.exists(TOKEN_FILE):
+            with open(TOKEN_FILE, 'r') as f:
+                tokens = json.load(f)
+                return tokens.get(user_id, {})
+        return {}
+    except Exception as e:
+        print(f"ERROR: Failed to load tokens: {e}")
+        return {}
 
+def is_token_expired(expires_at):
+    """Check if token is expired (with 5 minute buffer)"""
+    if not expires_at:
+        return True
+    return time.time() > (expires_at - 300)  # 5 minute buffer
+
+def validate_token_scopes(token):
+    """Validate token and check available scopes"""
+    try:
+        headers = {"Authorization": "Bearer " + token}
+        response = requests.get('https://api.spotify.com/v1/me', headers=headers)
+        
+        if response.status_code == 200:
+            user_data = response.json()
+            print(f"DEBUG: Token validation successful for user: {user_data.get('display_name', 'Unknown')}")
+            return True
+        elif response.status_code == 401:
+            print(f"DEBUG: Token is expired or invalid (401)")
+            return False
+        elif response.status_code == 403:
+            print(f"DEBUG: Token has insufficient scopes (403)")
+            return False
+        else:
+            print(f"DEBUG: Token validation failed with status: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        print(f"DEBUG: Error validating token: {e}")
+        return False
 
 
 # database check
@@ -140,93 +237,86 @@ def home():
 # spotify login
 @application.route('/login/')
 def logging_in():
-    gen_auth_url = Oauth_function( 'https://api.genius.com/oauth/authorize' , genius_clientId , genius_callbackURL , genius_full_permission , genius_clientsECRET , 'code' )
-
-    # refreshable
-    if 'code' in flask.request.args :
-        auth_code = flask.request.args['code']
-        spotify_token = _retrieve_refreshable_token(auth_code)
-
-        # ******************
-        # WE ARE NOW SAVING THE TOKEN TO A WEB TECNIQUE
-        # ******************
-
-        # save to sessions
-        # flask.session['spotify_token'] = spotify_token
-        # return flask.redirect('/Dashboard')
-
-        # save to url argument
-        # return flask.redirect(flask.url_for('Dashboard', spotify_token = spotify_token ))
-
-        # save to cookies 
-        if 'spotify_token' in flask.session and flask.session.get('spotify_expired') == False:
-            return flask.redirect( gen_auth_url )
-            # return flask.redirect('/Dashboard')
-        else:
-            resp = flask.make_response(flask.redirect(gen_auth_url))
-            # resp = flask.make_response(flask.redirect('/Dashboard'))
-            flask.session['spotify_token'] = spotify_token
-            flask.session['spotify_expired'] = False
-            return resp
-    return flask.redirect( "/" )
-
-# genius login
-@application.route('/gen_login/')
-def gen_login():
     # Check if we have an authorization code
-    auth_code = flask.request.args.get("code")
-    
-    if not auth_code:
-        # No code provided, redirect to home
-        return flask.redirect('/')
-    
-    try:
-        # Exchange code for token
-        genius_token = _retrieve_genius_token(auth_code)
+    if 'code' in flask.request.args:
+        auth_code = flask.request.args['code']
+        token_data = _retrieve_refreshable_token(auth_code)
         
-        if not genius_token:
-            print("ERROR: Failed to retrieve Genius token")
+        if not token_data:
+            print("ERROR: Failed to retrieve Spotify tokens")
             return flask.redirect('/')
         
-        # save to cookies 
-        if 'genius_token' in flask.session and flask.session.get('genius_expired') == False:
-            return flask.redirect('/Dashboard')
-        else:
-            resp = flask.make_response(flask.redirect('/Dashboard'))
-            flask.session['genius_token'] = genius_token
-            flask.session['genius_expired'] = False
-            return resp
-            
-    except Exception as e:
-        print(f"ERROR: Genius login failed: {e}")
-        return flask.redirect('/')
+        # Get user info to create user ID
+        user_info = fetch_spotify_data(token_data['access_token'], 'https://api.spotify.com/v1/me')
+        if user_info == "ERROR":
+            print("ERROR: Failed to get user info")
+            return flask.redirect('/')
+        
+        user_id = user_info.get('id', user_info.get('email', 'unknown'))
+        
+        # Save tokens to local storage
+        save_user_token(user_id, {
+            'spotify_token': token_data['access_token'],
+            'spotify_refresh_token': token_data.get('refresh_token'),
+            'spotify_expires_at': time.time() + token_data.get('expires_in', 3600),
+            'genius_token': genius_api_key  # Use our API key directly
+        })
+        
+        # Store user info in session
+        flask.session['user_id'] = user_id
+        flask.session['spotify_token'] = token_data['access_token']
+        flask.session['spotify_expired'] = False
+        flask.session['username'] = user_info.get('display_name', 'User')
+        
+        print(f"SUCCESS: User {user_id} authenticated and tokens saved")
+        return flask.redirect('/Dashboard')
+    
+    return flask.redirect("/")
+
+# Genius API key is now handled automatically - no user login needed
 
 
 
 # User Dashboard
-# TODO @app.route('/user/<username>')
 @application.route('/Dashboard', methods=['GET'])
 def Dashboard():
-    # COOKIES
-    if 'spotify_token' not in flask.session or flask.session['spotify_expired'] == True:
-        print(f"\n\n\n------------\nAccess denied (spotify token): {request.remote_addr}\n------------")
+    # Check if user is authenticated
+    if 'user_id' not in flask.session:
+        print(f"\n\n\n------------\nAccess denied (no user session): {request.remote_addr}\n------------")
         return flask.redirect('/')
-    elif 'genius_token' not in flask.session :
-        print(f"\n\n\n------------\nAccess denied (genius token): {request.remote_addr}\n------------")
+    
+    user_id = flask.session['user_id']
+    
+    # Load stored tokens
+    token_data = load_user_token(user_id)
+    if not token_data:
+        print(f"\n\n\n------------\nAccess denied (no stored tokens): {request.remote_addr}\n------------")
         return flask.redirect('/')
-
-    # ************
-    # RETRIEVING THE TOKEN!!!!
-    # ************
-
-    # retrieve from sessions
-    # spotify_token =  flask.session['spotify_token']
-
-    # retrieve from url arguments
-    # spotify_token =  request.args.get('spotify_token')
-
-    # retrieve from cookies
-    spotify_token = flask.session.get('spotify_token')
+    
+    # Check if Spotify token is expired and refresh if needed
+    spotify_token = token_data.get('spotify_token')
+    if not spotify_token or is_token_expired(token_data.get('spotify_expires_at')):
+        print(f"INFO: Spotify token expired for user {user_id}, attempting refresh...")
+        
+        if token_data.get('spotify_refresh_token'):
+            new_tokens = _refresh_spotify_token(token_data['spotify_refresh_token'])
+            if new_tokens:
+                # Update stored tokens
+                token_data.update(new_tokens)
+                save_user_token(user_id, token_data)
+                spotify_token = new_tokens['access_token']
+                flask.session['spotify_token'] = spotify_token
+                print(f"SUCCESS: Refreshed Spotify token for user {user_id}")
+            else:
+                print(f"ERROR: Failed to refresh Spotify token for user {user_id}")
+                return flask.redirect('/')
+        else:
+            print(f"ERROR: No refresh token available for user {user_id}")
+            return flask.redirect('/')
+    
+    # Store current token in session for compatibility
+    flask.session['spotify_token'] = spotify_token
+    flask.session['genius_token'] = token_data.get('genius_token', genius_api_key)
 
     # fetch user data from spotify after auth functions
     user_data = fetch_spotify_data(spotify_token , 'https://api.spotify.com/v1/me' )
@@ -261,11 +351,19 @@ def Dashboard():
         
         # Generate meme with error handling
         try:
-            meme_url = fetch_meme(text0=f'{flask.session["username"]} thinks', text1="they're a data scientist...")['data']['url']
+            meme_result = fetch_meme(flask.session["username"])
+            meme_url = meme_result['data']['url']
         except Exception as meme_error:
             print(f"ERROR: Meme generation failed: {meme_error}")
-            meme_url = 'https://via.placeholder.com/400x400?text=Error+Loading+Meme'
+            meme_url = '/static/fallback.svg'
 
+        # Get recently played tracks
+        try:
+            recent_tracks = user_recently_played(spotify_token, limit=10)
+        except Exception as e:
+            print(f"ERROR: Failed to fetch recently played tracks: {e}")
+            recent_tracks = []
+        
         # final display
         context = {
             'data': user_data,
@@ -273,6 +371,7 @@ def Dashboard():
             'email': flask.session['email'], 
             'meme': meme_url,
             "amount_analyzed": amount_analyzed,
+            "recent_tracks": recent_tracks,
         }
         return render_template('user_dashboard.html', context=context)
 
@@ -290,111 +389,151 @@ def search_form():
     return flask.render_template('search_form.html' )
 @application.route('/search-results', methods=['POST'])
 def search_results():
-    spotify_token = flask.session.get('spotify_token')
-    q = flask.request.form.get('q')
-    q_type = flask.request.form.get('q_type')
-
-    artists = []
-    tracks = []
-    images = []
-    # SEARCHING FOR TRACKS
-    if q_type == None or q_type == 'None':
-        q_type = 'track'
-        # search spotify
-        data = fetch_spotify_data(spotify_token, f'https://api.spotify.com/v1/search?q={q}&type={q_type}')
-        q_type += 's'
-        tracks = data[q_type]['items']
+    try:
+        spotify_token = flask.session.get('spotify_token')
+        if not spotify_token:
+            return flask.redirect('/')
         
+        q = flask.request.form.get('q')
+        if not q:
+            return "Search query is required", 400
+            
+        q_type = flask.request.form.get('q_type')
 
-        # add images
-        # for i in range(len(tracks)):
-        #     tracks[i]['thumbnail'] = fetch_spotify_data(spotify_token, tracks[i]['artists'][0]['href'] )['images'][-1]['url']
-        for i in tracks:
-            i['thumbnail'] = fetch_spotify_data(spotify_token, i['artists'][0]['href'] )['images'][-1]['url']
+        artists = []
+        tracks = []
+        
+        # SEARCHING FOR TRACKS
+        if q_type == None or q_type == 'None':
+            q_type = 'track'
+            # search spotify
+            data = fetch_spotify_data(spotify_token, f'https://api.spotify.com/v1/search?q={q}&type={q_type}')
+            
+            if data == "ERROR":
+                return "Failed to search Spotify. Please try again.", 500
+                
+            q_type += 's'
+            tracks = data.get(q_type, {}).get('items', [])
+            
+            # add images safely
+            for i in tracks:
+                try:
+                    if i.get('artists') and len(i['artists']) > 0:
+                        artist_href = i['artists'][0].get('href')
+                        if artist_href:
+                            artist_data = fetch_spotify_data(spotify_token, artist_href)
+                            if artist_data != "ERROR" and artist_data.get('images'):
+                                i['thumbnail'] = artist_data['images'][-1]['url']
+                            else:
+                                i['thumbnail'] = '/static/fallback.svg'
+                        else:
+                            i['thumbnail'] = '/static/fallback.svg'
+                    else:
+                        i['thumbnail'] = '/static/fallback.svg'
+                except Exception as e:
+                    print(f"ERROR adding thumbnail for track {i.get('name', 'Unknown')}: {e}")
+                    i['thumbnail'] = '/static/fallback.svg'
 
+        # SEARCHING FOR ARTISTS
+        else:
+            q_type = 'artist'
+            # search spotify
+            data = fetch_spotify_data(spotify_token, f'https://api.spotify.com/v1/search?q={q}&type={q_type}')
+            
+            if data == "ERROR":
+                return "Failed to search Spotify. Please try again.", 500
+                
+            q_type += 's'
+            artists = data.get(q_type, {}).get('items', [])
 
-
-    # SEARCHING FOR ARTISTS
-    else:
-        q_type = 'artist'
-        # search spotify
-        data = fetch_spotify_data(spotify_token, f'https://api.spotify.com/v1/search?q={q}&type={q_type}')
-        q_type += 's'
-        artists = data[q_type]['items']
-
-    content = {
-        'artists' : artists ,
-        'tracks' : tracks 
-    }
-    return flask.render_template('search_results.html' , content = content )
+        content = {
+            'artists' : artists ,
+            'tracks' : tracks,
+            'query': q
+        }
+        return flask.render_template('search_results.html' , content = content )
+        
+    except Exception as e:
+        print(f"ERROR in search_results: {e}")
+        return "An error occurred while searching. Please try again.", 500
 @application.route('/song-analysis', methods=['POST'  ])
 def song_analysis():
-    spotify_token = flask.session.get('spotify_token')
-    song_id = flask.request.form.get("analysis_id")
-    song_title = flask.request.form.get("song_name")
-    song_artist_name = flask.request.form.get("song_artist_name")
-    stats = _song_analysis_details(spotify_token , song_id , False , song_title , song_artist_name)
-    stats['song_title'] = song_title
-    stats['song_artist_name'] = song_artist_name
+    try:
+        spotify_token = flask.session.get('spotify_token')
+        if not spotify_token:
+            return flask.redirect('/')
+        
+        song_id = flask.request.form.get("analysis_id")
+        song_title = flask.request.form.get("song_name")
+        song_artist_name = flask.request.form.get("song_artist_name")
+        
+        if not song_id or not song_title or not song_artist_name:
+            return "Missing song information", 400
+        
+        stats = _song_analysis_details(spotify_token , song_id , False , song_title , song_artist_name)
+        
+        if not stats or stats == "ERROR":
+            print(stats)
+            error_message = f"Unable to analyze '{song_title}' by {song_artist_name}. "
+            error_message += "This song may not be available for analysis due to regional restrictions or premium content requirements."
+            return error_message, 500
+        
+        stats['song_title'] = song_title
+        stats['song_artist_name'] = song_artist_name
 
-    # add to total amount analyzed
-    flask.session['amount'] += 1
+        # add to total amount analyzed
+        flask.session['amount'] += 1
 
-    print("\nSEARCHED SONG "  )
+        print("\nSEARCHED SONG "  )
 
+        # DATA POINTS FOR BAR GRAPH
+        spotty_chart_datapoint_labels = [
+            'danceability',
+            'energy',
+            'speechiness',
+            'acousticness',
+            # 'instrumentalness',
+            'liveness',
+            'valence',
+        ]
 
+        # PIE CHART
+        ai_response = False
+        if stats['ai']['lyrics'] is not None : 
+            ai_response = True
+            emotionsLabels = list(stats['ai']['nlu']['averageEmotion'].keys())
+            emotionValues = [    stats['ai']['nlu']['averageEmotion'][i] for i in emotionsLabels  ]
 
+        if ai_response: #kinda redundant but i mean.... why not have the modularity?
+            content = {
+                'stats'  : stats,
+                'ai_response'  : ai_response,
 
-    # DATA POINTS FOR BAR GRAPH
-    spotty_chart_datapoint_labels = [
-        'danceability',
-        'energy',
-        'speechiness',
-        'acousticness',
-        # 'instrumentalness',
-        'liveness',
-        'valence',
-    ]
+                # spotify data
+                'spotty_chart_labels' : spotty_chart_datapoint_labels    ,
+                'spotty_chart_data' :  [stats[i] for i in spotty_chart_datapoint_labels   ]  ,
 
+                # watson data
+                'emotionLabels' : emotionsLabels,
+                'emotionValues' : emotionValues,
+            }
+        else: #NO LYRICS
+            content = {
+                'stats'  : stats,
+                'ai_response'  : ai_response,
+                'spotty_chart_labels' : spotty_chart_datapoint_labels    ,
+                'spotty_chart_data' :  [stats[i] for i in spotty_chart_datapoint_labels   ]  ,
 
-    # PIE CHART
-    ai_response = False
-    if stats['ai']['lyrics'] is not None : 
-        ai_response = True
-        emotionsLabels = list(stats['ai']['nlu']['averageEmotion'].keys())
-        emotionValues = [    stats['ai']['nlu']['averageEmotion'][i] for i in emotionsLabels  ]
+                # watson data
+                'emotionLabels' : None,
+                'emotionValues' : None,
+            }
 
-
-    if ai_response: #kinda redundant but i mean.... why not have the modularity?
-        content = {
-            'stats'  : stats,
-            'ai_response'  : ai_response,
-
-            # spotify data
-            'spotty_chart_labels' : spotty_chart_datapoint_labels    ,
-            'spotty_chart_data' :  [stats[i] for i in spotty_chart_datapoint_labels   ]  ,
-
-            # watson data
-            'emotionLabels' : emotionsLabels,
-            'emotionValues' : emotionValues,
-        }
-
-
-
-    else: #NO LYRICS
-        content = {
-            'stats'  : stats,
-            'ai_response'  : ai_response,
-            'spotty_chart_labels' : spotty_chart_datapoint_labels    ,
-            'spotty_chart_data' :  [stats[i] for i in spotty_chart_datapoint_labels   ]  ,
-
-            # watson data
-            'emotionLabels' : None,
-            'emotionValues' : None,
-        }
-
-    
-    return flask.render_template('song_analysis.html' , content = content)
+        return flask.render_template('song_analysis.html' , content = content)
+        
+    except Exception as e:
+        print(f"ERROR in song_analysis: {e}")
+        return "An error occurred while analyzing the song. Please try again.", 500
 
 
 
@@ -629,7 +768,7 @@ def indivisualPlaylistDisplay():
 
     return flask.render_template('indivisual_group_listing.html' , display_data = display_data)
 
-# Playlist FINAL ANALYSIS
+# ALMBUM FINAL ANALYSIS
 @application.route('/indivisual-album-analysis', methods=['POST'])
 def indivisual_album_analysis():
     spotify_token = flask.session.get('spotify_token')
@@ -828,6 +967,83 @@ def indivisual_playlist_analysis():
     return flask.render_template('Liked_Group_analysis.html' , content = content)
 
 
+# Recently played tracks analysis
+@application.route('/recent-analysis', methods=['GET'])
+def recent_analysis():
+    spotify_token = flask.session.get('spotify_token')
+    if not spotify_token:
+        return flask.redirect('/')
+    
+    # Get recently played tracks
+    recent_tracks = user_recently_played(spotify_token, limit=50)
+    
+    if not recent_tracks:
+        return "No recently played tracks found.", 404
+    
+    # Convert to format expected by liked_group_average
+    tracks_for_analysis = []
+    for track in recent_tracks:
+        track_info = {
+            'id': track['id'],
+            'name': track['name'],
+            'artists': track['artists']
+        }
+        tracks_for_analysis.append(track_info)
+    
+    # Analyze tracks using existing function
+    song_stats, each_song_stats = liked_group_average(spotify_token, tracks_for_analysis)
+    
+    # Add amount to total analyzed
+    flask.session['amount'] += song_stats['ai']['amount'] if song_stats.get('ai') else 0
+    
+    # Prepare chart data
+    spotty_chart_datapoint_labels = [
+        'danceability',
+        'energy',
+        'speechiness',
+        'acousticness',
+        'liveness',
+        'valence',
+    ]
+    
+    # Check if we have AI analysis
+    ai_response = False
+    emotionsLabels = None
+    emotionValues = None
+    
+    if song_stats.get('ai') and song_stats['ai']:
+        ai_response = True
+        if song_stats['ai'].get('averageEmotion'):
+            emotionsLabels = list(song_stats['ai']['averageEmotion'].keys())
+            emotionValues = [song_stats['ai']['averageEmotion'][i] for i in emotionsLabels]
+    
+    # Prepare context
+    if ai_response:
+        content = {
+            'stats': song_stats,
+            'ai_response': ai_response,
+            'spotty_chart_labels': spotty_chart_datapoint_labels,
+            'spotty_chart_data': [song_stats[i] for i in spotty_chart_datapoint_labels],
+            'emotionLabels': emotionsLabels,
+            'emotionValues': emotionValues,
+        }
+    else:
+        content = {
+            'stats': song_stats,
+            'ai_response': ai_response,
+            'spotty_chart_labels': spotty_chart_datapoint_labels,
+            'spotty_chart_data': [song_stats[i] for i in spotty_chart_datapoint_labels],
+            'emotionLabels': None,
+            'emotionValues': None,
+        }
+    
+    # Add metadata
+    USERNAME = fetch_spotify_data(spotify_token, 'https://api.spotify.com/v1/me')
+    song_stats['song_title'] = USERNAME['display_name']
+    song_stats['song_artist_name'] = "Recently Played Tracks"
+    
+    return flask.render_template('Liked_Group_analysis.html', content=content)
+
 # liked songs Analysis
 @application.route('/liked-analysis', methods=['GET'])
 def liked_analysis():
@@ -915,18 +1131,35 @@ def liked_analysis():
 # FLASK ERRORS
 @application.errorhandler(404)
 def page_not_found(e):
-    try:
-        meme_pic = fetch_meme('Look everyone!' , 'this guys lost...' )['data']['url']
-        tag = f'<img src="{meme_pic}" alt="its a trap!">'
-        return tag, 404
-    except Exception as e:
-        print("wtf happened with my meme???")
-        print(e)
-        return 'are u lost?', 404 
+    return flask.render_template('error.html', 
+                               error_title='Page Not Found',
+                               error_message='The page you are looking for does not exist.'), 404
 
 @application.errorhandler(500)
-def handle_intsrverr(e):
+def handle_internal_error(e):
     return flask.redirect('/Dashboard')
+
+@application.errorhandler(400)
+def handle_bad_request(e):
+    return flask.render_template('error.html',
+                               error_title='Bad Request',
+                               error_message='The request could not be processed. Please check your input and try again.')
+
+@application.errorhandler(401)
+def handle_unauthorized(e):
+    return flask.redirect('/')
+
+# Custom error route
+@application.route('/error')
+def show_error():
+    error_title = flask.request.args.get('title', 'An error occurred')
+    error_message = flask.request.args.get('message', 'Something went wrong')
+    error_details = flask.request.args.get('details', '')
+    
+    return flask.render_template('error.html',
+                               error_title=error_title,
+                               error_message=error_message,
+                               error_details=error_details)
 
 
 
@@ -982,7 +1215,7 @@ def authorize_spotify_REFRESHABLE():
     url = f"https://accounts.spotify.com/authorize?client_id={headers['client_id']}&response_type={headers['response_type']}&redirect_uri={headers['redirect_uri']}&scope={headers['scope']}"
     return url
 def _retrieve_refreshable_token(auth_code):
-    # turn this into new function after user goes to web_page and logs in
+    """Exchange authorization code for access and refresh tokens"""
     url = "https://accounts.spotify.com/api/token"
     headers = {}
     data = {}
@@ -998,9 +1231,49 @@ def _retrieve_refreshable_token(auth_code):
     data['code'] = auth_code
     data['redirect_uri'] = spotify_callbackURL
 
-    r = requests.post(url, headers=headers, data=data).json()
-    token = r['access_token']
-    return token
+    try:
+        r = requests.post(url, headers=headers, data=data)
+        r.raise_for_status()
+        response_data = r.json()
+        
+        return {
+            'access_token': response_data['access_token'],
+            'refresh_token': response_data.get('refresh_token'),
+            'expires_in': response_data.get('expires_in', 3600)
+        }
+    except Exception as e:
+        print(f"ERROR: Failed to retrieve Spotify tokens: {e}")
+        return None
+
+def _refresh_spotify_token(refresh_token):
+    """Refresh expired Spotify access token"""
+    url = "https://accounts.spotify.com/api/token"
+    headers = {}
+    data = {}
+
+    # Encode as Base64
+    message = f"{spotify_clientId}:{spotify_clientSecret}"
+    messageBytes = message.encode('ascii')
+    base64Bytes = base64.b64encode(messageBytes)
+    base64Message = base64Bytes.decode('ascii')
+
+    headers['Authorization'] = f"Basic {base64Message}"
+    data['grant_type'] = "refresh_token"
+    data['refresh_token'] = refresh_token
+
+    try:
+        r = requests.post(url, headers=headers, data=data)
+        r.raise_for_status()
+        response_data = r.json()
+        
+        return {
+            'access_token': response_data['access_token'],
+            'refresh_token': response_data.get('refresh_token', refresh_token),  # Keep old refresh token if new one not provided
+            'expires_in': response_data.get('expires_in', 3600)
+        }
+    except Exception as e:
+        print(f"ERROR: Failed to refresh Spotify token: {e}")
+        return None
 def _retrieve_genius_token(auth_code):
     # Exchange authorization code for access token
     url = "https://api.genius.com/oauth/token"
@@ -1045,14 +1318,27 @@ def Oauth_function(base_url, CLIENT_ID, callback, scope, clientsECRET, res_type)
 
 # SPOTIFFY ENDPOINTS
 def fetch_spotify_data(token , endpoint ):
-    headers = {"Authorization": "Bearer " + token}
-    res = requests.get(url= endpoint ,  headers=headers ).json()
-    if 'error' in res:
-        print(f"\n{flask.request.remote_addr} -------\nERROR {res['error']['message']} \n")
+    try:
+        headers = {"Authorization": "Bearer " + token}
+        response = requests.get(url=endpoint, headers=headers)
+        response.raise_for_status()
+        res = response.json()
+        
+        if 'error' in res:
+            error_msg = res['error'].get('message', 'Unknown error')
+            print(f"\n{flask.request.remote_addr} -------\nERROR {error_msg} \n")
+            flask.session['spotify_expired'] = True
+            return f"ERROR"
+        
+        return res
+    except requests.exceptions.RequestException as e:
+        print(f"\n{flask.request.remote_addr} -------\nREQUEST ERROR: {str(e)} \n")
         flask.session['spotify_expired'] = True
         return f"ERROR"
-        # return flask.redirect(flask.url_for('Dashboard', Authorization= f'Bearer {token}' ))
-    return res
+    except Exception as e:
+        print(f"\n{flask.request.remote_addr} -------\nUNEXPECTED ERROR: {str(e)} \n")
+        flask.session['spotify_expired'] = True
+        return f"ERROR"
 
 
 
@@ -1133,10 +1419,11 @@ def user_playlists(token):
                 "songs" : [],
             }
 
-            # LOOKUP SONGS
+            # LOOKUP SONGS (pagination using key next)
             pl_tracks_call = requests.get(url=item['tracks']['href'] , headers = headers).json()
             while pl_tracks_call:
                 for track in pl_tracks_call['items']:
+                    
                     all_playlists[count]['songs'].append(   (track['track']['id'] , track['track']['name']  ,[ i['name'] for i in track['track']['artists']  ] )   )
             
                 # PAGINATION [TRACKS]
@@ -1154,6 +1441,49 @@ def user_playlists(token):
             results = None
     return all_playlists
 
+def user_recently_played(token, limit=20):
+    """Fetch user's recently played tracks from Spotify"""
+    try:
+        # Get recently played tracks
+        endpoint = f"https://api.spotify.com/v1/me/player/recently-played?limit={limit}"
+        results = fetch_spotify_data(token, endpoint)
+        
+        if results == "ERROR":
+            print("ERROR: Failed to fetch recently played tracks")
+            return []
+        
+        recent_tracks = []
+        for item in results.get('items', []):
+            track = item['track']
+            played_at = item['played_at']
+            
+            # Get artist image for thumbnail
+            thumbnail = '/static/fallback.svg'
+            if track.get('artists') and len(track['artists']) > 0:
+                artist_href = track['artists'][0].get('href')
+                if artist_href:
+                    artist_data = fetch_spotify_data(token, artist_href)
+                    if artist_data != "ERROR" and artist_data.get('images'):
+                        thumbnail = artist_data['images'][-1]['url']
+            
+            # GET TRACK INFO
+            track_info = {
+                'id': track['id'],
+                'name': track['name'],
+                'artists': [artist['name'] for artist in track['artists']],
+                'album': track['album']['name'],
+                'thumbnail': thumbnail,
+                'played_at': played_at,
+                'popularity': track.get('popularity', 0)
+            }
+            recent_tracks.append(track_info)
+        
+        return recent_tracks
+        
+    except Exception as e:
+        print(f"ERROR: Failed to fetch recently played tracks: {e}")
+        return []
+
 
 
 
@@ -1163,61 +1493,102 @@ def user_playlists(token):
 def _song_analysis_details(token , song_id , details : bool , song_title , artist_name): 
 
     # check if song in database already
-    with open('song_db.json' , "r") as db:
-        loaded = json.load(db)
-        if song_id in loaded:
-            return loaded[song_id]
-
-
-
-
-
+    try:
+        with open('song_db.json' , "r") as db:
+            loaded = json.load(db)
+            if song_id in loaded:
+                return loaded[song_id]
+    except (FileNotFoundError, json.JSONDecodeError):
+        # Create empty database if it doesn't exist
+        loaded = {}
 
     endpoint = f"https://api.spotify.com/v1/audio-features/{song_id}"
     titleInfo = fetch_spotify_data(token, f'https://api.spotify.com/v1/tracks/{song_id}')
-    song_title =  titleInfo['name']  
-    artist_name =  titleInfo['artists'][0]['name']
+    
+    if titleInfo == "ERROR":
+        print(f"ERROR: Failed to fetch track info for {song_id}")
+        return None
+        
+    try:
+        song_title = titleInfo['name']  
+        artist_name = titleInfo['artists'][0]['name']
+    except (KeyError, IndexError, TypeError):
+        print(f"ERROR: Invalid track info structure for {song_id}")
+        return None
 
     # fetch data
     res = fetch_spotify_data(token , endpoint )
+    
+    if res == "ERROR":
+        print(f"ERROR: Failed to fetch audio features for {song_id}")
+        print(f"  Song: {song_title} by {artist_name}")
+        print(res)
+        # Additional debugging for 403 errors
+        try:
+            headers = {"Authorization": "Bearer " + token}
+            response = requests.get(url=endpoint, headers=headers)
+            
+            if response.status_code == 403:
+                print(f"DEBUG: 403 Forbidden - Checking token scopes...")
+                print(f"DEBUG: Token starts with: {token[:20]}...")
+                
+                # Validate token scopes
+                if validate_token_scopes(token):
+                    print(f"DEBUG: Token is valid for basic endpoints")
+                    print(f"DEBUG: 403 error suggests insufficient scopes for audio features")
+                    print(f"DEBUG: Required scopes for audio features: user-read-private, user-read-email")
+                    print(f"DEBUG: Current token may be missing required scopes")
+                else:
+                    print(f"DEBUG: Token validation failed - token may be expired or invalid")
+                    
+            elif response.status_code == 401:
+                print(f"DEBUG: 401 Unauthorized - Token expired or invalid")
+            else:
+                print(f"DEBUG: HTTP {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            print(f"DEBUG: Error during debugging: {e}")
+        
+        return None
 
     # SONG DETAIL DOUBLE FEATURE of the function
     if details:
-        analysis = requests.get( url = res['analysis_url'], headers = headers ).json()
-        pprint.pprint( analysis.keys()  );print("\n")
-        pprint.pprint( analysis['track']   )
-        return analysis
-
+        try:
+            analysis = requests.get( url = res['analysis_url'], headers = {"Authorization": "Bearer " + token} ).json()
+            pprint.pprint( analysis.keys()  );print("\n")
+            pprint.pprint( analysis['track']   )
+            return analysis
+        except Exception as e:
+            print(f"ERROR: Failed to fetch detailed analysis: {e}")
+            return None
 
     # check if response was a dictionary
     if isinstance(res , dict):
         pass
     else:
+        print(f"ERROR: Invalid response type for {song_id}: {type(res)}")
         return None
-    
-
 
     # API COOL DOWN ERROR HANDLING
     while 'error' in res.keys():
         print(f'< {song_id} > got an error\n waiting for api cooldown')
         time.sleep(API_COOLDOWN_RATE)
-        res = _song_analysis_details(token, song_id , details  )
-    
-    
+        res = _song_analysis_details(token, song_id , details, song_title, artist_name )
     
     # append WATSON AI to SOTIFY results  (master dictionary of clean watson frequencies)
     res['ai'] = _watson_lyric_analysis( song_title, artist_name)
     res['song_title'] = song_title
     res['artist_name'] = artist_name
 
-
-
     # adding items to song_db.json DATABASE
-    with open('song_db.json' , 'r') as  db :
-        loaded = json.load( db )
-        loaded[song_id] = res
-    with open('song_db.json' , 'w') as  db :
-        db .write(  json.dumps(loaded)   )
+    try:
+        with open('song_db.json' , 'r') as db:
+            loaded = json.load( db )
+            loaded[song_id] = res
+        with open('song_db.json' , 'w') as db:
+            db.write( json.dumps(loaded) )
+    except Exception as e:
+        print(f"ERROR: Failed to save to database: {e}")
 
     return res
 
@@ -1255,9 +1626,10 @@ def _watson_lyric_analysis(  song_title, artist_name):
     }
     return context
 
-def _request_song_info(token , song_title, artist_name):
+def _request_song_info(token, song_title, artist_name):
     base_url = 'https://api.genius.com'
-    headers = {'Authorization': 'Bearer ' + token  }
+    # Use the stored Genius API key directly
+    headers = {'Authorization': 'Bearer ' + genius_api_key}
     search_url = base_url + '/search'
     data = {'q': song_title + ' ' + artist_name}
     response = requests.get(search_url, data=data, headers=headers).json()
@@ -1695,8 +2067,55 @@ def liked_group_average(token , group : list()  ):
 
 
 # helper functions
-def fetch_meme(text0, text1):
+def fetch_meme(username):
     try:
+        # Check if we have imgflip credentials
+        if not imgflip_username or not imgflip_password:
+            print("WARNING: Imgflip credentials not found. Using local fallback image.")
+            return {'data': {'url': '/static/fallback.svg'}}
+        
+        # Collection of funny code and music-related meme texts
+        meme_texts = [
+            # Code-related memes
+            (f"{username} thinks", "they're a data scientist..."),
+            (f"{username} when", "the code finally compiles"),
+            (f"{username} debugging", "at 3 AM"),
+            (f"{username} trying to", "understand their own code"),
+            (f"{username} after", "fixing one bug"),
+            (f"{username} when", "git merge works"),
+            (f"{username} coding", "without Stack Overflow"),
+            (f"{username} explaining", "their code to others"),
+            (f"{username} trying to", "deploy to production"),
+            (f"{username} when", "the tests pass"),
+            
+            # Music-related memes
+            (f"{username} listening to", "their own playlist"),
+            (f"{username} when", "their favorite song comes on"),
+            (f"{username} trying to", "find the perfect song"),
+            (f"{username} analyzing", "music like a pro"),
+            (f"{username} discovering", "new music"),
+            (f"{username} when", "Spotify recommends hits"),
+            (f"{username} explaining", "music theory"),
+            (f"{username} trying to", "match the beat"),
+            (f"{username} when", "the bass drops"),
+            (f"{username} analyzing", "song emotions"),
+            
+            # Code + Music crossover memes
+            (f"{username} coding", "to music"),
+            (f"{username} when", "music helps debug"),
+            (f"{username} trying to", "code and listen"),
+            (f"{username} explaining", "code with music analogies"),
+            (f"{username} debugging", "with headphones on"),
+            (f"{username} when", "music inspires code"),
+            (f"{username} coding", "like a DJ"),
+            (f"{username} trying to", "sync code and music"),
+            (f"{username} when", "the algorithm grooves"),
+            (f"{username} analyzing", "code like a song")
+        ]
+        
+        # Randomly select a meme text combination
+        text0, text1 = random.choice(meme_texts)
+
         # fetch all memes
         response = requests.get('https://api.imgflip.com/get_memes')
         response.raise_for_status()
@@ -1704,7 +2123,7 @@ def fetch_meme(text0, text1):
         
         if 'data' not in data or 'memes' not in data['data']:
             print("ERROR: Invalid response from imgflip API")
-            return {'data': {'url': 'https://via.placeholder.com/400x400?text=No+Meme+Available'}}
+            return {'data': {'url': '/static/fallback.svg'}}
         
         memes = data['data']['memes']
         # List top memes with 2 text slots
@@ -1713,34 +2132,36 @@ def fetch_meme(text0, text1):
         
         if not images:
             print("ERROR: No 2-text memes available")
-            return {'data': {'url': 'https://via.placeholder.com/400x400?text=No+Meme+Available'}}
+            return {'data': {'url': '/static/fallback.svg'}}
         
         # Take random meme from available ones
         meme = random.choice(images)
         
-        # Generate meme
+        # Generate meme with proper authentication
         URL = 'https://api.imgflip.com/caption_image'
         params = {
-            'username': '',  # No username needed for public API
-            'password': '',  # No password needed for public API
+            'username': imgflip_username,
+            'password': imgflip_password,
             'template_id': meme['id'],
             'text0': text0,
             'text1': text1
         }
         
-        meme_response = requests.post(URL, params=params)
+        meme_response = requests.post(URL, data=params)
         meme_response.raise_for_status()
         result = meme_response.json()
         
         if 'success' in result and result['success'] and 'data' in result:
+            print(f"SUCCESS: Generated meme with template '{meme['name']}' and text: '{text0}' / '{text1}'")
             return result
         else:
-            print(f"ERROR: Failed to generate meme: {result}")
-            return {'data': {'url': 'https://via.placeholder.com/400x400?text=Meme+Generation+Failed'}}
+            error_msg = result.get('error_message', 'Unknown error')
+            print(f"ERROR: Failed to generate meme: {error_msg}")
+            return {'data': {'url': '/static/fallback.svg'}}
             
     except Exception as e:
         print(f"ERROR: fetch_meme failed: {e}")
-        return {'data': {'url': 'https://via.placeholder.com/400x400?text=Error+Loading+Meme'}}
+        return {'data': {'url': '/static/fallback.svg'}}
 
 
 
