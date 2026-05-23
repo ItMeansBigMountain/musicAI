@@ -38,3 +38,4 @@ __pycache__/
 *.pyc
 musicai_tokens.db
 musicai_tokens.db-*
+.vercel
