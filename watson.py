@@ -67,7 +67,7 @@ def analyzeText(client, text):
 
 # CLEAN DATA
 def ai_to_Text(message):
-  response = analyzeText(nlu_client, message)
+  response = analyzeText(get_nlu_client(), message)
   response = json.loads(response)
 
   # MAKE A DICTIONARY THAT HOLDS THE AVERAGES OF THE OUTPUT
@@ -306,6 +306,12 @@ def averages_calc( text_Models ):
 
 
 
-# runs on import
-nlu_client = login()
+nlu_client = None
+
+
+def get_nlu_client():
+  global nlu_client
+  if nlu_client is None:
+    nlu_client = login()
+  return nlu_client
 
