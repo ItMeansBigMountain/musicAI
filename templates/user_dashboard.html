@@ -134,6 +134,21 @@
 
                 <hr>
 
+                <div class="w3-container">
+                    <h5 class="w3-opacity"><b>Connected Providers</b></h5>
+                    {% if context.connected_providers %}
+                    <p class="w3-text-grey">Active music accounts:</p>
+                    <div>
+                        {% for provider in context.connected_providers %}
+                        <span class="w3-tag w3-teal w3-round w3-margin-bottom">{{ provider.provider }}</span>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="w3-text-grey">Spotify is connected. Add YouTube Music or Last.fm from the MusicAI homepage when keys are configured.</p>
+                    {% endif %}
+                    <p><a href="/#providers"><button class="btn btn-secondary">Manage providers</button></a></p>
+                </div>
+
 
 
 

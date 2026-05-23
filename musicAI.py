@@ -24,6 +24,9 @@ import bs4
 
 # WATSON AI
 import watson
+from providers import get_music_providers
+from provider_oauth import complete_provider_oauth, start_provider_oauth
+from token_store import ProviderToken, list_provider_tokens, load_provider_token, save_provider_token
 
 
 # MATH
@@ -144,38 +147,41 @@ for i in scopes:
 
 # Token storage functions
 def save_user_token(user_id, token_data):
-    """Save user tokens to local storage"""
+    """Save Spotify-compatible token payloads into encrypted provider storage."""
     try:
-        if os.path.exists(TOKEN_FILE):
-            with open(TOKEN_FILE, 'r') as f:
-                tokens = json.load(f)
-        else:
-            tokens = {}
-        
-        tokens[user_id] = {
-            'spotify_token': token_data.get('spotify_token'),
-            'spotify_refresh_token': token_data.get('spotify_refresh_token'),
-            'spotify_expires_at': token_data.get('spotify_expires_at'),
-            'genius_token': token_data.get('genius_token'),
-            'last_updated': time.time()
-        }
-        
-        with open(TOKEN_FILE, 'w') as f:
-            json.dump(tokens, f, indent=2)
-            
+        access_token = token_data.get('spotify_token') or token_data.get('access_token')
+        refresh_token = token_data.get('spotify_refresh_token') or token_data.get('refresh_token')
+        expires_at = token_data.get('spotify_expires_at')
+        if not expires_at and token_data.get('expires_in'):
+            expires_at = time.time() + token_data.get('expires_in', 3600)
+
+        save_provider_token(ProviderToken(
+            user_id=user_id,
+            provider='spotify',
+            provider_account_id=user_id,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_at=expires_at,
+            scopes=spotty_full_permission.strip(),
+            metadata={'genius_token_configured': bool(token_data.get('genius_token'))},
+        ))
     except Exception as e:
-        print(f"ERROR: Failed to save tokens: {e}")
+        print(f"ERROR: Failed to save encrypted provider tokens: {e}")
 
 def load_user_token(user_id):
-    """Load user tokens from local storage"""
+    """Load Spotify-compatible token payloads from encrypted provider storage."""
     try:
-        if os.path.exists(TOKEN_FILE):
-            with open(TOKEN_FILE, 'r') as f:
-                tokens = json.load(f)
-                return tokens.get(user_id, {})
-        return {}
+        spotify = load_provider_token(user_id, 'spotify')
+        if not spotify:
+            return {}
+        return {
+            'spotify_token': spotify.access_token,
+            'spotify_refresh_token': spotify.refresh_token,
+            'spotify_expires_at': spotify.expires_at,
+            'genius_token': genius_api_key,
+        }
     except Exception as e:
-        print(f"ERROR: Failed to load tokens: {e}")
+        print(f"ERROR: Failed to load encrypted provider tokens: {e}")
         return {}
 
 def is_token_expired(expires_at):
@@ -227,11 +233,58 @@ def home():
     if "amount" not in flask.session:
        flask.session['amount'] = 0
 
+    spotify_login_url = authorize_spotify_REFRESHABLE()
     content = {
-        'implciit_url' : authorize_spotify_IMPLICIT(),
-        'refreshable_url' : authorize_spotify_REFRESHABLE()
+        'implicit_url': authorize_spotify_IMPLICIT(),
+        'refreshable_url': spotify_login_url,
+        'providers': get_music_providers(spotify_login_url),
+        'enabled_provider_count': 3,
+        'planned_provider_count': 7,
     }
     return render_template('homepage.html' , content = content)
+
+
+@application.route('/providers', methods=['GET'])
+def provider_connections():
+    user_id = flask.session.get('user_id')
+    connected = list_provider_tokens(user_id) if user_id else []
+    content = {
+        'providers': get_music_providers(authorize_spotify_REFRESHABLE()),
+        'connected': connected,
+    }
+    return jsonify(content)
+
+
+@application.route('/providers/<provider_id>/connect', methods=['GET'])
+def provider_connect(provider_id):
+    try:
+        start = start_provider_oauth(provider_id)
+        flask.session[f'{provider_id}_oauth_state'] = start.state
+        flask.session[f'{provider_id}_oauth_token'] = start.token
+        return flask.redirect(start.url)
+    except Exception as e:
+        print(f"ERROR: Failed to start {provider_id} OAuth: {e}")
+        return flask.redirect('/')
+
+
+@application.route('/providers/<provider_id>/callback', methods=['GET'])
+def provider_callback(provider_id):
+    try:
+        if provider_id == 'youtube_music':
+            expected_state = flask.session.get(f'{provider_id}_oauth_state')
+            returned_state = flask.request.args.get('state')
+            if expected_state and returned_state != expected_state:
+                raise RuntimeError('OAuth state mismatch')
+
+        user_id = flask.session.get('user_id') or flask.session.get('email') or flask.request.remote_addr or 'local-user'
+        token = complete_provider_oauth(provider_id, flask.request.args.to_dict(), user_id)
+        flask.session['user_id'] = user_id
+        flask.session[f'{provider_id}_connected'] = True
+        print(f"SUCCESS: Connected {provider_id} for {user_id}: {token.provider_account_id}")
+        return flask.redirect('/Dashboard')
+    except Exception as e:
+        print(f"ERROR: Failed to complete {provider_id} OAuth: {e}")
+        return flask.redirect('/')
 
 
 # spotify login
@@ -365,6 +418,7 @@ def Dashboard():
             recent_tracks = []
         
         # final display
+        connected_providers = list_provider_tokens(user_id)
         context = {
             'data': user_data,
             'username': flask.session['username'],
@@ -372,6 +426,8 @@ def Dashboard():
             'meme': meme_url,
             "amount_analyzed": amount_analyzed,
             "recent_tracks": recent_tracks,
+            "connected_providers": connected_providers,
+            "provider_cards": get_music_providers(authorize_spotify_REFRESHABLE()),
         }
         return render_template('user_dashboard.html', context=context)
 
