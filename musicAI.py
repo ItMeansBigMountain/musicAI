@@ -227,6 +227,24 @@ else:
 
 
 
+
+
+@application.route('/healthz', methods=['GET'])
+def healthz():
+    """Public deploy health check with non-secret integration status."""
+    return jsonify({
+        'ok': True,
+        'app': 'MusicAI',
+        'providers': {
+            'spotify': bool(os.getenv('SPOTIFY_CLIENT_ID') and os.getenv('SPOTIFY_CLIENT_SECRET')),
+            'genius': bool(os.getenv('GENIUS_API_KEY')),
+            'watson': bool(os.getenv('WATSON_API_KEY') and os.getenv('WATSON_SERVICE_URL')),
+            'google_youtube': bool(os.getenv('GOOGLE_CLIENT_ID') and os.getenv('GOOGLE_CLIENT_SECRET')),
+            'lastfm': bool(os.getenv('LASTFM_API_KEY') and os.getenv('LASTFM_SHARED_SECRET')),
+        },
+    })
+
+
 # homepage
 @application.route('/', methods=['GET'])
 def home():
